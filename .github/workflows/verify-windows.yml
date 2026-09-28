@@ -1,0 +1,57 @@
+# Install only in the company's public verification repository, protected main branch.
+name: Sphere public Windows verification
+on:
+  workflow_dispatch:
+    inputs:
+      request_tag:
+        required: true
+        type: string
+      input_sha256:
+        required: true
+        type: string
+      expected_subject:
+        required: true
+        type: string
+permissions:
+  contents: write
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Fetch and verify the exact requested artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REQUEST_TAG: ${{ inputs.request_tag }}
+          INPUT_SHA256: ${{ inputs.input_sha256 }}
+          EXPECTED_SUBJECT: ${{ inputs.expected_subject }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:REQUEST_TAG -notmatch '^verify-[0-9a-f]{32}$') { throw 'Invalid request tag' }
+          if ($env:INPUT_SHA256 -notmatch '^[0-9a-f]{64}$') { throw 'Invalid input digest' }
+          gh release download $env:REQUEST_TAG --pattern windows-signed.exe
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath windows-signed.exe).Hash.ToLowerInvariant()
+          if ($digest -cne $env:INPUT_SHA256) { throw 'Input digest mismatch' }
+          $sig = Get-AuthenticodeSignature -LiteralPath windows-signed.exe
+          if ($sig.Status -ne 'Valid') { throw "Authenticode failed: $($sig.Status)" }
+          if (-not $sig.TimeStamperCertificate) { throw 'Timestamp missing' }
+          if ($sig.SignerCertificate.Subject -cne $env:EXPECTED_SUBJECT) { throw 'Unexpected publisher' }
+          $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
+          if (-not $signtool) {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+              Where-Object FullName -Match '\\x64\\signtool\.exe$' | Sort-Object FullName -Descending | Select-Object -First 1
+          }
+          if (-not $signtool) { throw 'signtool.exe not found' }
+          & $signtool.Source verify /pa /all /v /tw windows-signed.exe
+          if ($LASTEXITCODE -ne 0) { throw 'SignTool failed' }
+          [ordered]@{
+            status = 'Valid'
+            input_sha256 = $digest
+            subject = $sig.SignerCertificate.Subject
+            timestamp_present = $true
+            signtool_verified = $true
+          } | ConvertTo-Json | Set-Content -Encoding utf8 windows-verification.json
+          gh release upload $env:REQUEST_TAG windows-verification.json
