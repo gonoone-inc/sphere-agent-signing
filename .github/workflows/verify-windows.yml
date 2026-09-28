@@ -38,7 +38,8 @@ jobs:
           $sig = Get-AuthenticodeSignature -LiteralPath windows-signed.exe
           if ($sig.Status -ne 'Valid') { throw "Authenticode failed: $($sig.Status)" }
           if (-not $sig.TimeStamperCertificate) { throw 'Timestamp missing' }
-          if ($sig.SignerCertificate.Subject -cne $env:EXPECTED_SUBJECT) { throw 'Unexpected publisher' }
+          $normalizedSubject = $sig.SignerCertificate.Subject.Replace('"', '')
+          if ($normalizedSubject -cne $env:EXPECTED_SUBJECT) { throw "Unexpected publisher: $normalizedSubject" }
           $signtoolCommand = Get-Command signtool.exe -ErrorAction SilentlyContinue
           $signtoolPath = if ($signtoolCommand) { $signtoolCommand.Source } else {
             (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
@@ -51,7 +52,7 @@ jobs:
           [ordered]@{
             status = 'Valid'
             input_sha256 = $digest
-            subject = $sig.SignerCertificate.Subject
+            subject = $normalizedSubject
             timestamp_present = $true
             signtool_verified = $true
           } | ConvertTo-Json | Set-Content -Encoding utf8 windows-verification.json
