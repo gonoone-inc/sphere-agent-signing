@@ -39,13 +39,14 @@ jobs:
           if ($sig.Status -ne 'Valid') { throw "Authenticode failed: $($sig.Status)" }
           if (-not $sig.TimeStamperCertificate) { throw 'Timestamp missing' }
           if ($sig.SignerCertificate.Subject -cne $env:EXPECTED_SUBJECT) { throw 'Unexpected publisher' }
-          $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
-          if (-not $signtool) {
-            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
-              Where-Object FullName -Match '\\x64\\signtool\.exe$' | Sort-Object FullName -Descending | Select-Object -First 1
+          $signtoolCommand = Get-Command signtool.exe -ErrorAction SilentlyContinue
+          $signtoolPath = if ($signtoolCommand) { $signtoolCommand.Source } else {
+            (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+              Where-Object FullName -Match '\\x64\\signtool\.exe$' | Sort-Object FullName -Descending |
+              Select-Object -First 1).FullName
           }
-          if (-not $signtool) { throw 'signtool.exe not found' }
-          & $signtool.Source verify /pa /all /v /tw windows-signed.exe
+          if (-not $signtoolPath) { throw 'signtool.exe not found' }
+          & $signtoolPath verify /pa /all /v /tw windows-signed.exe
           if ($LASTEXITCODE -ne 0) { throw 'SignTool failed' }
           [ordered]@{
             status = 'Valid'
