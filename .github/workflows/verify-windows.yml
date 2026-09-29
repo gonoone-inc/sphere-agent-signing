@@ -14,12 +14,16 @@ on:
         type: string
 permissions:
   contents: write
+  id-token: write
 jobs:
   verify:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
       - name: Fetch and verify the exact requested artifact
         shell: pwsh
         env:
@@ -56,4 +60,9 @@ jobs:
             timestamp_present = $true
             signtool_verified = $true
           } | ConvertTo-Json | Set-Content -Encoding utf8 windows-verification.json
-          gh release upload $env:REQUEST_TAG windows-verification.json
+          # 결과에 이 워크플로의 OIDC 신원을 묶는다. 서명이 없으면 GitLab 쪽은 "Valid" 라고 적힌
+          # JSON 이 실제로 이 실행에서 나왔는지 알 수 없고, 저장소 쓰기 권한만 있으면 위조된다.
+          # Linux 서명 경로(sign-linux.yml)와 같은 Fulcio/Rekor 방식이다.
+          cosign sign-blob --yes windows-verification.json --bundle windows-verification.json.sigstore.json
+          if ($LASTEXITCODE -ne 0) { throw 'cosign sign-blob failed' }
+          gh release upload $env:REQUEST_TAG windows-verification.json windows-verification.json.sigstore.json
